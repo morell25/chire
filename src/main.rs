@@ -11,22 +11,40 @@ async fn process_socket(socket: TcpStream) {
     loop {
         buff.clear();
         let res: Result<usize, std::io::Error> = reader.read_line(&mut buff).await;
+
         match res {
             Ok(0) => {
                 println!("clientes desconectado");
                 break;
             }
-            Ok(_n) => match buff.trim() {
-                "PING" => {
-                    let _ = write_half.write_all(b"PONG\n").await;
+            Ok(_n) => {
+                let line = buff.trim().to_lowercase();
+                let (cmd, rest) = line.split_once(' ').unwrap_or((&line, ""));
+
+                match cmd {
+                    "ping" => {
+                        let _ = write_half.write_all(b"PONG\n").await;
+                    }
+                    "echo" => {
+                        if rest.is_empty() {
+                            let _ = write_half.write_all(b"echo sin parametros\n").await;
+                        }
+                        let _ = write_half.write_all(rest.as_bytes()).await;
+                    }
+                    "help" => {
+                        let _ = write_half
+                            .write_all(b"Commands: PING, ECHO, HELP, QUIT\n")
+                            .await;
+                    }
+                    "quit" => {
+                        let _ = write_half.write_all(b"BYE\n").await;
+                        break;
+                    }
+                    _ => {
+                        let _ = write_half.write_all(b"ERR unknown command\n").await;
+                    }
                 }
-                "echo" => {
-                    let _ = write_half.write_all(b"hola mundo\n").await;
-                }
-                _ => {
-                    let _ = write_half.write_all(b"Err unknow command\n").await;
-                }
-            },
+            }
             Err(_) => {
                 println!("Error"); //Futuro log
                 break;
