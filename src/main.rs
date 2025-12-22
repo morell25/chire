@@ -4,9 +4,51 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::RwLock,
+    time::Instant,
 };
 
-async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, String>>>) {
+#[derive(Debug, Clone)]
+struct Entry {
+    data: String,
+    expire_at: Option<Instant>,
+}
+
+impl Entry {
+    fn create(value: String) -> Self {
+        Self {
+            data: value,
+            expire_at: None,
+        }
+    }
+    fn set_expiration(&mut self, expire_at: Instant) {
+        self.expire_at = Some(expire_at);
+    }
+}
+
+async fn cleaner(dic: Arc<RwLock<HashMap<String, Entry>>>) {
+    let dic_cli = dic;
+    let mut expired: Vec<String> = Vec::new();
+    let now = tokio::time::Instant::now();
+
+    for (key, val) in dic_cli.read().await.iter() {
+        if let Some(t) = val.expire_at {
+            if t >= now {
+                expired.push(key.to_owned())
+            }
+        }
+    }
+
+    if !expired.is_empty() {
+        {
+            for x in expired {
+                let mut cli_guard = dic_cli.write().await;
+                let _ = cli_guard.remove(&x);
+            }
+        }
+    }
+}
+
+async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry>>>) {
     let (read_half, mut write_half) = socket.into_split();
     let mut buff = String::new();
     let mut reader = BufReader::new(read_half);
@@ -38,11 +80,31 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Strin
                         };
                         {
                             let mut map = dic_cliente.write().await;
-                            map.insert(key, value);
+                            map.insert(key, Entry::create(value));
                         }
 
                         let result = format!("Ok, insetado correctametne\n");
                         let _ = write_half.write_all(result.as_bytes()).await;
+                    }
+                    "expire" => {
+                        let mut string_white = rest.split_whitespace();
+                        let key = string_white.next();
+                        let value = string_white.next();
+
+                        if key.is_none() || value.is_some() {
+                            let _ = write_half.write_all(b"Error en los parametros\n").await;
+                        }
+
+                        {
+                            let mut guard = dic_cliente.write().await;
+                            if let Some(u) = guard.get_mut(key.expect("")) {
+                                u.set_expiration(
+                                    tokio::time::Instant::now()
+                                        + tokio::time::Duration::from_secs(100),
+                                )
+                            }
+                        };
+                        let _ = write_half.write_all(b"contadoro fijado\n").await;
                     }
                     "get" => {
                         let mut it = rest.split_whitespace();
@@ -60,7 +122,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Strin
                         };
 
                         let response = match map_guard {
-                            Some(v) => format!("objeto encontrado: {v}\n"),
+                            Some(v) => format!("objeto encontrado {:?}\n", v),
                             None => {
                                 format!("objeto no encontrado, parametro usado: {:?}\n", extra_key)
                             }
@@ -69,7 +131,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Strin
                     }
                     "getall" => {
                         for (ke, val) in dic_cliente.read().await.iter() {
-                            let result = format!("Objeto -> key: {}, value: {}\n", ke, val);
+                            let result = format!("Objeto -> key: {}, value: {:?}\n", ke, val);
                             let _ = write_half.write_all(result.as_bytes()).await;
                         }
                     }
@@ -125,7 +187,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Strin
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
-    let dic_compa: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    let dic_compa: Arc<RwLock<HashMap<String, Entry>>> = Arc::new(RwLock::new(HashMap::new()));
 
     loop {
         let (socket, _) = listener.accept().await?;
