@@ -25,7 +25,7 @@ impl Entry {
     }
 }
 
-async fn cleaner(dic: Arc<RwLock<HashMap<String, Entry>>>) {
+async fn cleaner(dic: &Arc<RwLock<HashMap<String, Entry>>>) {
     let dic_cli = dic;
     let mut expired: Vec<String> = Vec::new();
     let now = tokio::time::Instant::now();
@@ -100,7 +100,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                             if let Some(u) = guard.get_mut(key.expect("")) {
                                 u.set_expiration(
                                     tokio::time::Instant::now()
-                                        + tokio::time::Duration::from_secs(100),
+                                        + tokio::time::Duration::from_secs(20),
                                 )
                             }
                         };
@@ -188,6 +188,18 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
     let dic_compa: Arc<RwLock<HashMap<String, Entry>>> = Arc::new(RwLock::new(HashMap::new()));
+
+    {
+        let dic = dic_compa.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(20));
+                loop {
+                    interval.tick().await;
+                    cleaner(&dic).await;
+                    println!("limpieza terminada\n");
+                }
+        });
+    }
 
     loop {
         let (socket, _) = listener.accept().await?;
