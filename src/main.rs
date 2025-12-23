@@ -32,18 +32,19 @@ async fn cleaner(dic: &Arc<RwLock<HashMap<String, Entry>>>) {
 
     for (key, val) in dic_cli.read().await.iter() {
         if let Some(t) = val.expire_at {
-            if t >= now {
-                expired.push(key.to_owned())
+            if t <= now {
+                expired.push(key.clone())
             }
         }
     }
 
     if !expired.is_empty() {
-        {
-            for x in expired {
-                let mut cli_guard = dic_cli.write().await;
-                let _ = cli_guard.remove(&x);
-            }
+        //Se saca el guard fuera del for porque no tiene sentido bloquear en cada iteración
+        //Aqui se podria volver a comprobar si junto entre alguien ha actualizado su hora de borrado
+        //Pero es poco probleba por lo que de momento no lo voy a hacer
+        let mut cli_guard = dic_cli.write().await;
+        for x in expired {
+            let _ = cli_guard.remove(&x);
         }
     }
 }
@@ -193,11 +194,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dic = dic_compa.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(20));
-                loop {
-                    interval.tick().await;
-                    cleaner(&dic).await;
-                    println!("limpieza terminada\n");
-                }
+            loop {
+                interval.tick().await;
+                cleaner(&dic).await;
+                println!("limpieza terminada\n");
+            }
         });
     }
 
