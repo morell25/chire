@@ -1,10 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
+mod aof;
 
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::RwLock,
     time::Instant,
+    time::Duration,
+    time,
 };
 
 #[derive(Debug, Clone)]
@@ -28,7 +31,7 @@ impl Entry {
 async fn cleaner(dic: &Arc<RwLock<HashMap<String, Entry>>>) {
     let dic_cli = dic;
     let mut expired: Vec<String> = Vec::new();
-    let now = tokio::time::Instant::now();
+    let now = Instant::now();
 
     for (key, val) in dic_cli.read().await.iter() {
         if let Some(t) = val.expire_at {
@@ -100,8 +103,8 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                             let mut guard = dic_cliente.write().await;
                             if let Some(u) = guard.get_mut(key.expect("")) {
                                 u.set_expiration(
-                                    tokio::time::Instant::now()
-                                        + tokio::time::Duration::from_secs(20),
+                                    Instant::now()
+                                        + Duration::from_secs(20),
                                 )
                             }
                         };
@@ -193,11 +196,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let dic = dic_compa.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(20));
+            let mut interval = time::interval(Duration::from_secs(20));
             loop {
                 interval.tick().await;
                 cleaner(&dic).await;
                 println!("limpieza terminada\n");
+                aof::file();
             }
         });
     }
