@@ -57,7 +57,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                             let _ = aof::append_result(entry_chire, "db_main".to_string()).await;
                         }
 
-                        let result = format!("Ok, insetado correctametne\n");
+                        let result = "Ok, insetado correctametne\n";
                         let _ = write_half.write_all(result.as_bytes()).await;
                     }
                     "expire" => {
@@ -118,8 +118,8 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                         let h = { dic_cliente.write().await.remove(key.expect("")) };
 
                         let result = match h {
-                            Some(_v) => format!("1\n"),
-                            None => format!("0\n"),
+                            Some(_v) => "1\n",
+                            None => "0\n",
                         };
                         let _ = write_half.write_all(result.as_bytes()).await;
                     }
@@ -157,9 +157,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let name_port: &'static str = "127.0.0.1:6789";
+pub async fn run_server(name_port: &str) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(name_port).await?;
     let dic_compa: Arc<RwLock<HashMap<String, EntryChire>>> =
         Arc::new(RwLock::new(HashMap::new()));
@@ -180,5 +178,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (socket, _) = listener.accept().await?;
         let dic_clo = dic_compa.clone();
         tokio::spawn(async move { process_socket(socket, dic_clo).await });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cleaner, types::EntryChire};
+    use std::{collections::HashMap, sync::Arc};
+    use tokio::{
+        sync::RwLock,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn entry_chire_create_sets_fields() {
+        let entry = EntryChire::create("valor".to_string());
+        assert_eq!(entry.data, "valor");
+        assert!(entry.expire_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn cleaner_removes_expired_entries() {
+        let dic: Arc<RwLock<HashMap<String, EntryChire>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let mut expired = EntryChire::create("expirado".to_string());
+        expired.set_expiration(Instant::now() - Duration::from_secs(1));
+
+        let mut active = EntryChire::create("activo".to_string());
+        active.set_expiration(Instant::now() + Duration::from_secs(60));
+
+        {
+            let mut guard = dic.write().await;
+            guard.insert("exp".to_string(), expired);
+            guard.insert("act".to_string(), active);
+        }
+
+        cleaner::cleaner_out_date(&dic).await;
+
+        let guard = dic.read().await;
+        assert!(!guard.contains_key("exp"));
+        assert!(guard.contains_key("act"));
     }
 }
