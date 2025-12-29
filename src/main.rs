@@ -1,58 +1,24 @@
-use std::{collections::HashMap, sync::Arc};
+//aof
 mod aof;
+mod cleaner;
+mod operation;
 
+//Types
+mod types;
+use crate::types::EntryChire;
+
+//crates externos
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::RwLock,
-    time::Instant,
-    time::Duration,
     time,
+    time::Duration,
+    time::Instant,
 };
 
-#[derive(Debug, Clone)]
-struct Entry {
-    data: String,
-    expire_at: Option<Instant>,
-}
-
-impl Entry {
-    fn create(value: String) -> Self {
-        Self {
-            data: value,
-            expire_at: None,
-        }
-    }
-    fn set_expiration(&mut self, expire_at: Instant) {
-        self.expire_at = Some(expire_at);
-    }
-}
-
-async fn cleaner(dic: &Arc<RwLock<HashMap<String, Entry>>>) {
-    let dic_cli = dic;
-    let mut expired: Vec<String> = Vec::new();
-    let now = Instant::now();
-
-    for (key, val) in dic_cli.read().await.iter() {
-        if let Some(t) = val.expire_at {
-            if t <= now {
-                expired.push(key.clone())
-            }
-        }
-    }
-
-    if !expired.is_empty() {
-        //Se saca el guard fuera del for porque no tiene sentido bloquear en cada iteración
-        //Aqui se podria volver a comprobar si junto entre alguien ha actualizado su hora de borrado
-        //Pero es poco probleba por lo que de momento no lo voy a hacer
-        let mut cli_guard = dic_cli.write().await;
-        for x in expired {
-            let _ = cli_guard.remove(&x);
-        }
-    }
-}
-
-async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry>>>) {
+async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, EntryChire>>>) {
     let (read_half, mut write_half) = socket.into_split();
     let mut buff = String::new();
     let mut reader = BufReader::new(read_half);
@@ -73,6 +39,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
 
                 match cmd {
                     "set" => {
+                        //operation::set(rest);
                         let (key, value) = match rest.split_once(' ') {
                             Some((k, v)) if !k.trim().is_empty() && !v.trim_start().is_empty() => {
                                 (k.trim().to_string(), v.trim_start().to_string())
@@ -84,7 +51,10 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                         };
                         {
                             let mut map = dic_cliente.write().await;
-                            map.insert(key, Entry::create(value));
+                            let entry_chire = EntryChire::create(value);
+                            map.insert(key, entry_chire.clone());
+                            drop(map);
+                            let _ = aof::append_result(entry_chire, "db_main".to_string()).await;
                         }
 
                         let result = format!("Ok, insetado correctametne\n");
@@ -102,10 +72,7 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                         {
                             let mut guard = dic_cliente.write().await;
                             if let Some(u) = guard.get_mut(key.expect("")) {
-                                u.set_expiration(
-                                    Instant::now()
-                                        + Duration::from_secs(20),
-                                )
+                                u.set_expiration(Instant::now() + Duration::from_secs(20))
                             }
                         };
                         let _ = write_half.write_all(b"contadoro fijado\n").await;
@@ -157,7 +124,9 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
                         let _ = write_half.write_all(result.as_bytes()).await;
                     }
                     "ping" => {
-                        let _ = write_half.write_all(b"PONG\n").await;
+                        let result = aof::create_db().await;
+                        let pri = format!("PONG, var: {:?}\n", result);
+                        let _ = write_half.write_all(pri.as_bytes()).await;
                     }
                     "echo" => {
                         if rest.is_empty() {
@@ -190,8 +159,10 @@ async fn process_socket(socket: TcpStream, dic: Arc<RwLock<HashMap<String, Entry
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("127.0.0.1:6379").await?;
-    let dic_compa: Arc<RwLock<HashMap<String, Entry>>> = Arc::new(RwLock::new(HashMap::new()));
+    let name_port: &'static str = "127.0.0.1:6789";
+    let listener = TcpListener::bind(name_port).await?;
+    let dic_compa: Arc<RwLock<HashMap<String, EntryChire>>> =
+        Arc::new(RwLock::new(HashMap::new()));
 
     {
         let dic = dic_compa.clone();
@@ -199,9 +170,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut interval = time::interval(Duration::from_secs(20));
             loop {
                 interval.tick().await;
-                cleaner(&dic).await;
+                cleaner::cleaner_out_date(&dic).await;
                 println!("limpieza terminada\n");
-                aof::file();
             }
         });
     }
