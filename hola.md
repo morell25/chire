@@ -72,7 +72,6 @@ Por otra parte viendo desde la perspectiva de Manovich la hibridación de  **For
 - Fortune city articulos.- https://sparkful.app/topics/finance
 - Google Antigravity.- https://antigravity.google/
 - Antigravity xataka.- https://www.xataka.com/basics/que-antigravity-como-funciona-que-puedes-hacer-ide-inteligencia-artificial-google
-- 
 ## USO DE LA IA 
 
 He utilizado la IA de Gemini (https://gemini.google.com/app?hl=es-ES) para revisar la sintaxis, búsqueda de idas y estructurar el texto con el formato markdown
